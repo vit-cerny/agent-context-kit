@@ -4,12 +4,43 @@ Small, reversible global defaults for lower-token coding-agent sessions—withou
 
 This repo combines a short shared policy with existing, specialized tools. It does **not** pretend one hook can compress every tool call in every harness. Host hooks have different coverage; lossy compression can hide evidence.
 
-## One-click GitHub install (Windows)
+## Install from GitHub (Windows)
 
 ```powershell
-irm https://raw.githubusercontent.com/vit-cerny/agent-context-kit/main/install.ps1 | iex
+git clone https://github.com/vit-cerny/agent-context-kit
+cd agent-context-kit
 pwsh -File .\install.ps1 -Harness OpenCode -SetupRtk
 ```
+
+Clone first so you can read the scripts before running them. The installer needs `scripts/manage.ps1`, so running `install.ps1` alone from a URL is not supported.
+
+## Wrapper: `kit.cmd`
+
+`kit.cmd` runs the same `install.ps1` actions with shorter commands:
+
+```
+kit.cmd install           Enable everything, set up RTK
+kit.cmd on | off          Enable or disable the policy
+kit.cmd status            Show mode, toggles, logger state
+kit.cmd menu              Interactive numbered toggles
+kit.cmd report            Show measured tokens and mode deltas
+kit.cmd audit             Print always-on policy size (characters and rough tokens) with per-line breakdown
+kit.cmd mode lean|balanced|auto|extreme
+kit.cmd set <toggle> on|off|auto
+kit.cmd logs <folder>
+```
+
+`set` accepts: `websearch deepseek browser agentreach skills narrowcontext mcp github rtk graphify usagelog tooloutputlog`.
+
+`audit` prints the always-on policy size in characters and rough tokens, plus a per-line breakdown of what is always loaded. Full instructions: [toggle guide](docs/toggle.md). Cost and A/B results: [context comparison](docs/context-comparison.md).
+
+Usage log can live on another drive. `logs <folder>` sets `-LogPath <folder>\usage.jsonl`, for example:
+
+```
+kit.cmd logs D:\AgentContextKit
+```
+
+which is equivalent to `-LogPath D:\AgentContextKit\usage.jsonl`. Token deltas in `report` are observed measurements, not guarantees.
 
 ## Quick start (Windows)
  
@@ -25,6 +56,7 @@ pwsh -File .\install.ps1 -Action Disable
 pwsh -File .\install.ps1 -Action Enable
 pwsh -File .\install.ps1 -Action Configure -Mode Lean -DeepSeekSearch Off -Graphify Off
 pwsh -File .\install.ps1 -Action Report
+pwsh -File .\install.ps1 -Action Audit
 ```
 
 `Disable` removes this repo's marked instruction block and its unchanged logger plugin. It leaves third-party tools, OpenCode config, saved settings, and logs untouched. RTK, Headroom, Ponytail, and Graphify keep their native controls; see [the stack guide](docs/stack.md).
@@ -40,6 +72,7 @@ Settings live in `agent-context-kit.json` beside the managed instructions. `-Act
 | `-AgentReach`, `-Skills` | `Auto`, `On`, `Off` | Use the relevant platform router or one task-specific skill, never load all skill bodies/references. |
 | `-NarrowContext` | `Auto`, `On`, `Off` | Search paths first and read only relevant files/sections. |
 | `-Mcp` | `Auto`, `On`, `Off` | Tell the agent to avoid MCPs (`Off`, default) or allow them when needed. This is an instruction toggle, not a hard OpenCode server policy; the toolkit does not edit `opencode.json(c)` or add MCP servers. |
+| `-GitHub` | `Auto`, `On`, `Off` | Prefer the `gh` CLI for repos, issues, and PRs; `Off` keeps work local. Instruction only. |
 | `-Rtk`, `-Graphify` | `Auto`, `On`, `Off` | Control existing integrations; Graphify is query-only and never auto-indexes. |
 | `-UsageLog`, `-ToolOutputLog` | `On`, `Off` | Log actual OpenCode token/cost/cache usage and tool-result size metadata. |
 

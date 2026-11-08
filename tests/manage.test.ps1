@@ -20,8 +20,8 @@ try {
     $text = [IO.File]::ReadAllText($file)
     Assert-True (($text.Split('<!-- agent-context-kit:start -->').Length - 1) -eq 1) 'enable must be idempotent'
     Assert-True ($text.Contains('User-owned rule.')) 'existing instructions must survive install'
-    Assert-True ($text.Contains('never auto-index or send content to semantic services')) 'Graphify privacy guardrail must survive install'
-    Assert-True ($text.Contains('Delegate only when asked; split independent work')) 'delegation limits must survive install'
+    Assert-True ($text.Contains('no auto-index or semantic upload')) 'Graphify privacy guardrail must survive install'
+    Assert-True ($text.Contains('Delegate only when asked; brief children minimally')) 'delegation limits must survive install'
     Assert-True ([IO.File]::Exists("$file.agent-context-kit.bak")) 'first edit must create a backup'
     Assert-True ([IO.File]::ReadAllText("$file.agent-context-kit.bak").Contains('User-owned rule.')) 'backup must preserve original text'
 
@@ -30,18 +30,30 @@ try {
     Assert-True ([IO.File]::Exists($settingsFile)) 'enable must persist configurable settings'
     Assert-True ([IO.File]::Exists($loggerPlugin)) 'default logging must install the local OpenCode plugin'
     Assert-True ($text.Contains('one relevant skill')) 'policy must keep skill loading lazy'
-    Assert-True ($text.Contains('never preload whole projects')) 'policy must scope project reads'
+    Assert-True ($text.Contains('glob/grep first')) 'policy must scope project reads'
 
-    & $manager -Action Configure -Harness OpenCode -ConfigRoot $testRoot -Mode Extreme -DeepSeekSearch Off -Mcp On -UsageLog Off -ToolOutputLog Off -TaskTag sample-task
+    & $manager -Action Configure -Harness OpenCode -ConfigRoot $testRoot -Mode Extreme -DeepSeekSearch Off -Mcp On -GitHub Off -UsageLog Off -ToolOutputLog Off -TaskTag sample-task
     $settings = [IO.File]::ReadAllText($settingsFile) | ConvertFrom-Json
     $text = [IO.File]::ReadAllText($file)
     Assert-True ($settings.mode -eq 'Extreme') 'configure must persist selected mode'
     Assert-True ($settings.features.DeepSeekSearch -eq 'Off') 'configure must persist individual route toggles'
+    Assert-True ($settings.features.GitHub -eq 'Off') 'configure must persist the GitHub toggle'
     Assert-True ($settings.taskTag -eq 'sample-task') 'configure must persist comparison tag'
     Assert-True ($text.Contains('DeepSeek search off')) 'disabled routes must be reflected in the policy'
+    Assert-True ($text.Contains('GitHub off, local git only')) 'disabled GitHub route must be reflected in the policy'
     Assert-True (-not [IO.File]::Exists($loggerPlugin)) 'disabling all loggers must remove the unchanged plugin'
 
-    & $manager -Action Enable -Harness OpenCode -ConfigRoot $testRoot -Mode Auto -DeepSeekSearch Auto -Mcp Off -UsageLog On -ToolOutputLog On -TaskTag ''
+    $audit = & $manager -Action Audit -Harness OpenCode -ConfigRoot $testRoot *>&1 | Out-String
+    Assert-True ($audit -match 'Policy: \d+ chars') 'audit must report the always-on policy size'
+    Assert-True ($audit.Contains('MCP and GitHub toggles change instructions only')) 'audit must state what toggles do not unload'
+    Assert-True ($audit.Contains('GitHub off, local git only')) 'audit must show the active policy lines'
+
+    & $manager -Action Configure -Harness OpenCode -ConfigRoot $testRoot -GitHub off -UsageLog off
+    $settings = [IO.File]::ReadAllText($settingsFile) | ConvertFrom-Json
+    Assert-True ($settings.features.GitHub -ceq 'Off') 'lowercase values must be stored canonically'
+    Assert-True ($settings.logging.Usage -ceq 'Off') 'lowercase log values must be stored canonically'
+
+    & $manager -Action Enable -Harness OpenCode -ConfigRoot $testRoot -Mode Auto -DeepSeekSearch Auto -Mcp Off -GitHub Auto -UsageLog On -ToolOutputLog On -TaskTag ''
 
     [IO.File]::AppendAllText($file, "Manual addition.`r`n")
     & $manager -Action Disable -Harness OpenCode -ConfigRoot $testRoot

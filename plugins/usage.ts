@@ -10,6 +10,7 @@ type Settings = {
   logging?: {
     Usage?: string
     ToolOutput?: string
+    Path?: string
   }
 }
 
@@ -27,7 +28,7 @@ async function settings(): Promise<Settings> {
   }
 }
 
-async function writeRecord(record: Record<string, unknown>) {
+async function writeRecord(record: Record<string, unknown>, logPath: string) {
   try {
     await mkdir(dirname(logPath), { recursive: true })
     await appendFile(logPath, `${JSON.stringify(record)}\n`, { encoding: "utf8", flag: "a" })
@@ -59,6 +60,16 @@ function metadata(config: Settings) {
     taskTag: config.taskTag || null,
     timestamp: new Date().toISOString(),
   }
+}
+
+function resolveLogPath(config: Settings) {
+  const custom = config.logging?.Path?.trim()
+  if (!custom) return logPath
+  let resolved = custom.replace(/%([^%]+)%/g, (match, name: string) => process.env[name] ?? match)
+  if (resolved.startsWith("~")) {
+    resolved = join(homedir(), resolved.slice(1).replace(/^[\\/]+/, ""))
+  }
+  return resolved
 }
 
 export default async function AgentContextKitUsage(input: any) {
@@ -100,7 +111,7 @@ export default async function AgentContextKitUsage(input: any) {
         cacheReadTokens: number(tokens.cache?.read),
         cacheWriteTokens: number(tokens.cache?.write),
         costUsd: number(data.cost),
-      })
+      }, resolveLogPath(config))
     }
   })().catch(() => console.warn("[Agent Context Kit] Usage event listener stopped."))
 
@@ -120,7 +131,7 @@ export default async function AgentContextKitUsage(input: any) {
       status: event.status,
       resultChars,
       estimatedResultTokens: Math.ceil(resultChars / 4),
-    })
+    }, resolveLogPath(config))
   })
 
   return () => controller.abort()

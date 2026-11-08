@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('Enable', 'Disable', 'Status', 'Configure', 'Report')]
+    [ValidateSet('Enable', 'Disable', 'Status', 'Configure', 'Report', 'Audit')]
     [string] $Action = 'Enable',
 
     [ValidateSet('OpenCode', 'T3Code', 'Codex', 'ClaudeCode', 'Gemini', 'All')]
@@ -27,6 +27,8 @@ param(
     [ValidateSet('Auto', 'On', 'Off')]
     [string] $Mcp,
     [ValidateSet('Auto', 'On', 'Off')]
+    [string] $GitHub,
+    [ValidateSet('Auto', 'On', 'Off')]
     [string] $Rtk,
     [ValidateSet('Auto', 'On', 'Off')]
     [string] $Graphify,
@@ -34,6 +36,9 @@ param(
     [string] $UsageLog,
     [ValidateSet('On', 'Off')]
     [string] $ToolOutputLog,
+    [AllowEmptyString()]
+    [ValidateLength(0, 260)]
+    [string] $LogPath,
     [AllowEmptyString()]
     [ValidateLength(0, 80)]
     [string] $TaskTag
@@ -108,12 +113,14 @@ function New-DefaultSettings {
             Skills = 'Auto'
             NarrowContext = 'On'
             Mcp = 'Off'
+            GitHub = 'Auto'
             Rtk = 'Auto'
             Graphify = 'Auto'
         }
         logging = [ordered]@{
             Usage = 'On'
             ToolOutput = 'On'
+            Path = ''
         }
     }
 }
@@ -144,22 +151,37 @@ function Read-Settings {
     }
 
     if ($null -ne $saved.PSObject.Properties['mode'] -and $saved.mode -in @('Auto', 'Balanced', 'Lean', 'Extreme')) {
-        $settings.mode = $saved.mode
+        $settings.mode = ConvertTo-CanonicalSetting ([string]$saved.mode)
     }
     if ($null -ne $saved.PSObject.Properties['taskTag'] -and $saved.taskTag -is [string]) { $settings.taskTag = $saved.taskTag }
     if ($null -ne $saved.PSObject.Properties['features']) {
         foreach ($name in @($settings.features.Keys)) {
             $property = $saved.features.PSObject.Properties[$name]
-            if ($null -ne $property -and $property.Value -in @('Auto', 'On', 'Off')) { $settings.features[$name] = $property.Value }
+            if ($null -ne $property -and $property.Value -in @('Auto', 'On', 'Off')) { $settings.features[$name] = ConvertTo-CanonicalSetting ([string]$property.Value) }
         }
     }
     if ($null -ne $saved.PSObject.Properties['logging']) {
-        foreach ($name in @($settings.logging.Keys)) {
+        foreach ($name in @('Usage', 'ToolOutput')) {
             $property = $saved.logging.PSObject.Properties[$name]
-            if ($null -ne $property -and $property.Value -in @('On', 'Off')) { $settings.logging[$name] = $property.Value }
+            if ($null -ne $property -and $property.Value -in @('On', 'Off')) { $settings.logging[$name] = ConvertTo-CanonicalSetting ([string]$property.Value) }
         }
+        $pathProperty = $saved.logging.PSObject.Properties['Path']
+        if ($null -ne $pathProperty -and $pathProperty.Value -is [string]) { $settings.logging.Path = $pathProperty.Value }
     }
     return $settings
+}
+
+function ConvertTo-CanonicalSetting {
+    param([AllowEmptyString()][string] $Value)
+    switch ($Value.ToLowerInvariant()) {
+        'auto'     { return 'Auto' }
+        'on'       { return 'On' }
+        'off'      { return 'Off' }
+        'balanced' { return 'Balanced' }
+        'lean'     { return 'Lean' }
+        'extreme'  { return 'Extreme' }
+        default    { return $Value }
+    }
 }
 
 function Update-Settings {
@@ -168,14 +190,15 @@ function Update-Settings {
         [Parameter(Mandatory)][System.Collections.IDictionary] $BoundParameters
     )
 
-    if ($BoundParameters.Keys -contains 'Mode') { $Settings.mode = $BoundParameters['Mode'] }
+    if ($BoundParameters.Keys -contains 'Mode') { $Settings.mode = ConvertTo-CanonicalSetting ([string]$BoundParameters['Mode']) }
     if ($BoundParameters.Keys -contains 'TaskTag') { $Settings.taskTag = $BoundParameters['TaskTag'] }
 
     foreach ($name in @($Settings.features.Keys)) {
-        if ($BoundParameters.Keys -contains $name) { $Settings.features[$name] = $BoundParameters[$name] }
+        if ($BoundParameters.Keys -contains $name) { $Settings.features[$name] = ConvertTo-CanonicalSetting ([string]$BoundParameters[$name]) }
     }
-    if ($BoundParameters.Keys -contains 'UsageLog') { $Settings.logging.Usage = $BoundParameters['UsageLog'] }
-    if ($BoundParameters.Keys -contains 'ToolOutputLog') { $Settings.logging.ToolOutput = $BoundParameters['ToolOutputLog'] }
+    if ($BoundParameters.Keys -contains 'UsageLog') { $Settings.logging.Usage = ConvertTo-CanonicalSetting ([string]$BoundParameters['UsageLog']) }
+    if ($BoundParameters.Keys -contains 'ToolOutputLog') { $Settings.logging.ToolOutput = ConvertTo-CanonicalSetting ([string]$BoundParameters['ToolOutputLog']) }
+    if ($BoundParameters.Keys -contains 'LogPath') { $Settings.logging.Path = $BoundParameters['LogPath'] }
     return $Settings
 }
 
@@ -192,52 +215,33 @@ function Write-Settings {
 function Get-PolicyBody {
     param([Parameter(Mandatory)][System.Collections.IDictionary] $Settings)
 
-    $lines = [System.Collections.Generic.List[string]]::new()
-    $lines.Add('## Context budget (Agent Context Kit)')
-    switch ($Settings.mode) {
-        'Auto'     { $lines.Add('- Mode: choose Balanced for complex/high-risk work, Lean for routine work, and Extreme only for low-risk repeats; never skip required research, validation, or safeguards.') }
-        'Balanced' { $lines.Add('- Mode: use only task-relevant tools and files; verify consequential facts.') }
-        'Lean'     { $lines.Add('- Mode: start with one relevant search/tool pass and targeted file ranges; avoid redundant lookups.') }
-        'Extreme'  { $lines.Add('- Mode: use minimal files and one relevant source/tool per need; skip optional searches/graphs/delegation, never required research, validation, or safeguards.') }
+    $modeText = switch ($Settings.mode) {
+        'Auto'     { 'Balanced for complex or high-risk work, Lean for routine, Extreme for low-risk repeats; never skip required research, validation, or safeguards' }
+        'Balanced' { 'use only task-relevant tools and files; verify consequential facts' }
+        'Lean'     { 'one relevant search or tool pass and targeted file ranges; no redundant lookups' }
+        'Extreme'  { 'minimal files and one relevant source per need; never skip required research, validation, or safeguards' }
     }
-
-    if ($Settings.features.NarrowContext -ne 'Off') {
-        $lines.Add('- Scope: glob/grep first; read only relevant files and sections; never preload whole projects.')
-    }
-    if ($Settings.features.Skills -eq 'Off') {
-        $lines.Add('- Skills: off.')
-    } else {
-        $lines.Add('- Skills: select one relevant skill (use a finder once if available); load only it and the references this task needs.')
-    }
+    $scopeText = if ($Settings.features.NarrowContext -ne 'Off') { 'glob/grep first; read only relevant files and sections' } else { 'read what the task needs' }
+    $skillsText = if ($Settings.features.Skills -eq 'Off') { 'off' } else { 'one relevant skill only, plus references this task needs' }
 
     $routes = [System.Collections.Generic.List[string]]::new()
-    if ($Settings.features.WebSearch -eq 'Off') { $routes.Add('web search off') } else { $routes.Add('built-in websearch for current facts') }
+    if ($Settings.features.WebSearch -eq 'Off') { $routes.Add('web search off') } else { $routes.Add('websearch for current facts') }
     if ($Settings.features.DeepSeekSearch -eq 'Off') { $routes.Add('DeepSeek search off') } else { $routes.Add('DeepSeek search only when it adds coverage') }
-    if ($Settings.features.Browser -eq 'Off') { $routes.Add('browser off') } else { $routes.Add('browser for interactive or visual page state only') }
-    $lines.Add('- Research: ' + ($routes -join '; ') + '.')
+    if ($Settings.features.Browser -eq 'Off') { $routes.Add('browser off') } else { $routes.Add('browser only for interactive or visual page state') }
+    if ($Settings.features.AgentReach -eq 'Off') { $routes.Add('Agent Reach off') } else { $routes.Add('Agent Reach only for supported platform tasks, router plus needed reference') }
+    if ($Settings.features.Mcp -eq 'Off') { $routes.Add('MCP off, prefer native tools and CLI') } else { $routes.Add('MCP only when no native tool or CLI covers it') }
+    if ($Settings.features.GitHub -eq 'Off') { $routes.Add('GitHub off, local git only') } else { $routes.Add('GitHub via gh CLI, not a GitHub MCP server') }
 
-    if ($Settings.features.AgentReach -eq 'Off') {
-        $lines.Add('- Agent Reach: off.')
-    } else {
-        $lines.Add('- Agent Reach: use only for supported platform tasks; load its router and only the needed platform reference.')
-    }
-    if ($Settings.features.Mcp -eq 'Off') {
-        $lines.Add('- MCP tools: do not use; prefer native OpenCode tools and CLI.')
-    } else {
-        $lines.Add('- MCP tools: use only when a required capability has no suitable native tool or CLI route.')
-    }
+    $tools = [System.Collections.Generic.List[string]]::new()
+    if ($Settings.features.Rtk -eq 'Off') { $tools.Add('RTK off') } else { $tools.Add('RTK summaries for routine shell output, raw for exact results, failures, audits, security') }
+    if ($Settings.features.Graphify -eq 'Off') { $tools.Add('Graphify off') } else { $tools.Add('Graphify existing graphs only, narrow query, verify source, no auto-index or semantic upload') }
 
-    if ($Settings.features.Rtk -eq 'Off') {
-        $lines.Add('- RTK: off.')
-    } else {
-        $lines.Add('- RTK: routine shell summaries only; raw output for exact results, failures, audits, and security.')
-    }
-    if ($Settings.features.Graphify -eq 'Off') {
-        $lines.Add('- Graphify: off.')
-    } else {
-        $lines.Add('- Graphify: query existing graphs narrowly; never auto-index or send content to semantic services; verify source.')
-    }
-    $lines.Add('- Delegate only when asked; split independent work; brief children minimally; request concise evidence; never repeat chat.')
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.Add('## Context budget (Agent Context Kit)')
+    $lines.Add("- Mode: $modeText. Scope: $scopeText. Skills: $skillsText.")
+    $lines.Add('- Routes: ' + ($routes -join '; ') + '.')
+    $lines.Add('- Tools: ' + ($tools -join '; ') + '.')
+    $lines.Add('- Delegate only when asked; brief children minimally; request concise evidence; never repeat chat.')
     return $lines -join "`n"
 }
 
@@ -364,7 +368,23 @@ function Get-UsagePluginPath {
     return Join-Path -Path (Split-Path -Parent $SettingsPath) -ChildPath 'plugins/agent-context-kit.ts'
 }
 
+function Expand-LogPath {
+    param([AllowEmptyString()][string] $Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
+    $expanded = [Environment]::ExpandEnvironmentVariables($Path.Trim())
+    if ($expanded.StartsWith('~')) {
+        $rest = $expanded.Substring(1).TrimStart('\', '/')
+        $expanded = if ($rest) { Join-Path (Get-HomeDirectory) $rest } else { Get-HomeDirectory }
+    }
+    return $expanded
+}
+
 function Get-UsageLogPath {
+    param([System.Collections.IDictionary] $Settings)
+    if ($null -ne $Settings) {
+        $custom = Expand-LogPath ([string]$Settings.logging.Path)
+        if ($custom) { return $custom }
+    }
     $localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
     if ([string]::IsNullOrWhiteSpace($localAppData)) {
         return Join-HomePath @('.local', 'state', 'agent-context-kit', 'usage.jsonl')
@@ -395,7 +415,12 @@ function Sync-UsageLogger {
         if ([IO.File]::Exists($pluginPath)) {
             $current = [IO.File]::ReadAllText($pluginPath)
             if ($current -cne $source) {
-                throw "A different plugin already exists; it was left untouched: $pluginPath"
+                if (-not $current.StartsWith('// <agent-context-kit:managed>')) {
+                    throw "A different plugin already exists; it was left untouched: $pluginPath"
+                }
+                Write-TextSafely -Path $pluginPath -Text $source
+                Write-Host "Updated local usage logger: $pluginPath"
+                return
             }
             Write-Host "Usage logger already installed: $pluginPath"
             return
@@ -429,8 +454,61 @@ function Get-RecordSum {
     return $sum
 }
 
+function Show-ContextAudit {
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Settings,
+        [Parameter(Mandatory)][string[]] $Paths
+    )
+
+    $policy = Get-PolicyBody -Settings $Settings
+    $chars = $policy.Length
+    Write-Host ("Policy: {0} chars, ~{1} tokens of always-on context (rough: characters / 4)." -f $chars, [math]::Ceiling($chars / 4))
+    Write-Host ("With markers: ~{0} tokens." -f [math]::Ceiling(($chars + 64) / 4))
+    foreach ($path in $Paths) {
+        if (-not [IO.File]::Exists($path)) {
+            Write-Host "  missing: $path"
+            continue
+        }
+        $text = [IO.File]::ReadAllText($path)
+        $span = Get-ManagedSpan $text
+        if ($null -eq $span) {
+            Write-Host ("  inactive: {0} ({1:N0} chars total)" -f $path, $text.Length)
+            continue
+        }
+        $foreignChars = $text.Length - $span.Length
+        Write-Host ("  active: {0} ({1:N0} chars total; {2:N0} yours, ~{3} tokens)" -f $path, $text.Length, $foreignChars, [math]::Ceiling($foreignChars / 4))
+        $block = $text.Substring($span.Start, $span.Length)
+        $lineNumber = 0
+        foreach ($line in ($block -split "`r?`n")) {
+            $lineNumber++
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            $flag = if ($line.Length -gt 400) { '  long: split or trim' } else { '' }
+            Write-Host ("    L{0} ~{1,4} tokens  {2}{3}" -f $lineNumber, [math]::Ceiling($line.Length / 4), $line, $flag)
+        }
+    }
+
+    Write-Host 'Always-on cost of this kit is the block above. Skill bodies, MCP tool schemas, project files, and web pages are not loaded by it.'
+    Write-Host 'MCP and GitHub toggles change instructions only; configured servers and tool schemas stay as OpenCode loads them.'
+    Write-Host 'Real savings appear as fewer tool calls and smaller tool output; check them with -Action Report.'
+
+    $logPath = Get-UsageLogPath -Settings $Settings
+    if (-not [IO.File]::Exists($logPath)) {
+        Write-Host "Actual usage: no records yet; run a task after enabling logging."
+        return
+    }
+    $usage = 0
+    $tools = 0
+    foreach ($line in [IO.File]::ReadLines($logPath)) {
+        if ($line.Contains('"type":"usage"')) { $usage++ }
+        elseif ($line.Contains('"type":"tool"')) { $tools++ }
+    }
+    Write-Host "Actual usage: $usage step records, $tools tool records."
+    Write-Host "Run -Action Report for token totals and same-tag mode deltas."
+}
+
 function Show-UsageReport {
-    $logPath = Get-UsageLogPath
+    param([System.Collections.IDictionary] $Settings)
+    $logPath = Get-UsageLogPath -Settings $Settings
     if (-not [IO.File]::Exists($logPath)) {
         Write-Host "No usage log found: $logPath"
         return
@@ -555,7 +633,7 @@ $settingsPath = Get-SettingsPath -TargetPaths $paths
 $settings = Read-Settings -Path $settingsPath
 $settingParameterNames = @(
     'Mode', 'TaskTag', 'WebSearch', 'DeepSeekSearch', 'Browser', 'AgentReach',
-    'Skills', 'NarrowContext', 'Mcp', 'Rtk', 'Graphify', 'UsageLog', 'ToolOutputLog'
+    'Skills', 'NarrowContext', 'Mcp', 'GitHub', 'Rtk', 'Graphify', 'UsageLog', 'ToolOutputLog'
 )
 $hasSettingOverrides = $false
 foreach ($name in $settingParameterNames) {
@@ -591,9 +669,10 @@ switch ($Action) {
         Write-Host "UsageLog : $($settings.logging.Usage)"
         Write-Host "ToolOutputLog : $($settings.logging.ToolOutput)"
         Write-Host "TaskTag : $(if ($settings.taskTag) { $settings.taskTag } else { '(unset)' })"
-        Write-Host "Usage log: $(Get-UsageLogPath)"
+        Write-Host "Usage log: $(Get-UsageLogPath -Settings $settings)"
         $pluginPath = Get-UsagePluginPath -SettingsPath $settingsPath
         Write-Host "Usage logger plugin: $(if ([IO.File]::Exists($pluginPath)) { 'installed' } else { 'not installed' })"
     }
-    'Report' { Show-UsageReport }
+    'Report' { Show-UsageReport -Settings $settings }
+    'Audit' { Show-ContextAudit -Settings $settings -Paths $paths }
 }
