@@ -1,6 +1,4 @@
 <!-- agent-context-kit:start -->
 ## Context budget (Agent Context Kit)
-- RTK only for supported shell summaries; use raw output for exact diffs, failures, audits, and security evidence.
-- If `graphify-out/graph.json` exists, query narrowly and verify against source; never auto-index or send content to semantic services.
-- When delegation is requested, split independent work only; give children minimal scope/context and request concise evidence. Never repeat the full chat.
+- RTK: supported shell summaries only; use raw output for exact results, failures, audits, security. Graphify: query existing graphs narrowly; verify source; never auto-index or send content to semantic services. Delegate only when asked; split independent work; brief children minimally, request concise evidence; never repeat chat.
 <!-- agent-context-kit:end -->

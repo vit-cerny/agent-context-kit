@@ -20,6 +20,8 @@ try {
     $text = [IO.File]::ReadAllText($file)
     Assert-True (($text.Split('<!-- agent-context-kit:start -->').Length - 1) -eq 1) 'enable must be idempotent'
     Assert-True ($text.Contains('User-owned rule.')) 'existing instructions must survive install'
+    Assert-True ($text.Contains('never auto-index or send content to semantic services')) 'Graphify privacy guardrail must survive install'
+    Assert-True ($text.Contains('Delegate only when asked; split independent work')) 'delegation limits must survive install'
     Assert-True ([IO.File]::Exists("$file.agent-context-kit.bak")) 'first edit must create a backup'
     Assert-True ([IO.File]::ReadAllText("$file.agent-context-kit.bak").Contains('User-owned rule.')) 'backup must preserve original text'
 
@@ -29,6 +31,18 @@ try {
     Assert-True (-not $text.Contains('<!-- agent-context-kit:start -->')) 'disable must remove managed block'
     Assert-True ($text.Contains('User-owned rule.')) 'disable must preserve existing instructions'
     Assert-True ($text.Contains('Manual addition.')) 'disable must preserve later manual edits'
+
+    $toggleRoot = Join-Path $testRoot 'toggle'
+    [void][IO.Directory]::CreateDirectory($toggleRoot)
+    $toggleFile = Join-Path $toggleRoot 'AGENTS.md'
+    $toggleOriginal = "Unmanaged rule.`r`n"
+    [IO.File]::WriteAllText($toggleFile, $toggleOriginal, [Text.UTF8Encoding]::new($false))
+    1..3 | ForEach-Object {
+        & $manager -Action Enable -Harness OpenCode -ConfigRoot $toggleRoot
+        & $manager -Action Disable -Harness OpenCode -ConfigRoot $toggleRoot
+    }
+    $toggleText = [IO.File]::ReadAllText($toggleFile)
+    Assert-True ($toggleText -ceq $toggleOriginal) 'repeated toggles must not add trailing whitespace'
 
     [IO.File]::WriteAllText($file, "<!-- agent-context-kit:start -->`r`nmalformed`r`n", [Text.UTF8Encoding]::new($false))
     $before = [IO.File]::ReadAllText($file)

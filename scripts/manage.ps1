@@ -18,9 +18,7 @@ $script:StartMarker = '<!-- agent-context-kit:start -->'
 $script:EndMarker = '<!-- agent-context-kit:end -->'
 $script:PolicyBody = @'
 ## Context budget (Agent Context Kit)
-- RTK only for supported shell summaries; use raw output for exact diffs, failures, audits, and security evidence.
-- If `graphify-out/graph.json` exists, query narrowly and verify against source; never auto-index or send content to semantic services.
-- When delegation is requested, split independent work only; give children minimal scope/context and request concise evidence. Never repeat the full chat.
+- RTK: supported shell summaries only; use raw output for exact results, failures, audits, security. Graphify: query existing graphs narrowly; verify source; never auto-index or send content to semantic services. Delegate only when asked; split independent work; brief children minimally, request concise evidence; never repeat chat.
 '@
 
 function Get-HomeDirectory {
@@ -164,7 +162,13 @@ function Remove-Policy {
         Write-Host "Inactive: $Path"
         return
     }
+    $tailStart = $span.Start + $span.Length
+    $tail = $text.Substring($tailStart)
     $updated = $text.Remove($span.Start, $span.Length)
+    $newline = Get-Newline $text
+    if ($tail -ceq $newline) {
+        $updated = $updated.Substring(0, $updated.Length - $newline.Length)
+    }
     Write-TextSafely -Path $Path -Text $updated
     Write-Host "Disabled policy: $Path"
 }
