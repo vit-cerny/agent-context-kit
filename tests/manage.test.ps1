@@ -25,12 +25,31 @@ try {
     Assert-True ([IO.File]::Exists("$file.agent-context-kit.bak")) 'first edit must create a backup'
     Assert-True ([IO.File]::ReadAllText("$file.agent-context-kit.bak").Contains('User-owned rule.')) 'backup must preserve original text'
 
+    $settingsFile = Join-Path $testRoot 'agent-context-kit.json'
+    $loggerPlugin = Join-Path $testRoot 'plugins/agent-context-kit.ts'
+    Assert-True ([IO.File]::Exists($settingsFile)) 'enable must persist configurable settings'
+    Assert-True ([IO.File]::Exists($loggerPlugin)) 'default logging must install the local OpenCode plugin'
+    Assert-True ($text.Contains('one relevant skill')) 'policy must keep skill loading lazy'
+    Assert-True ($text.Contains('never preload whole projects')) 'policy must scope project reads'
+
+    & $manager -Action Configure -Harness OpenCode -ConfigRoot $testRoot -Mode Extreme -DeepSeekSearch Off -Mcp On -UsageLog Off -ToolOutputLog Off -TaskTag sample-task
+    $settings = [IO.File]::ReadAllText($settingsFile) | ConvertFrom-Json
+    $text = [IO.File]::ReadAllText($file)
+    Assert-True ($settings.mode -eq 'Extreme') 'configure must persist selected mode'
+    Assert-True ($settings.features.DeepSeekSearch -eq 'Off') 'configure must persist individual route toggles'
+    Assert-True ($settings.taskTag -eq 'sample-task') 'configure must persist comparison tag'
+    Assert-True ($text.Contains('DeepSeek search off')) 'disabled routes must be reflected in the policy'
+    Assert-True (-not [IO.File]::Exists($loggerPlugin)) 'disabling all loggers must remove the unchanged plugin'
+
+    & $manager -Action Enable -Harness OpenCode -ConfigRoot $testRoot -Mode Auto -DeepSeekSearch Auto -Mcp Off -UsageLog On -ToolOutputLog On -TaskTag ''
+
     [IO.File]::AppendAllText($file, "Manual addition.`r`n")
     & $manager -Action Disable -Harness OpenCode -ConfigRoot $testRoot
     $text = [IO.File]::ReadAllText($file)
     Assert-True (-not $text.Contains('<!-- agent-context-kit:start -->')) 'disable must remove managed block'
     Assert-True ($text.Contains('User-owned rule.')) 'disable must preserve existing instructions'
     Assert-True ($text.Contains('Manual addition.')) 'disable must preserve later manual edits'
+    Assert-True (-not [IO.File]::Exists($loggerPlugin)) 'disable must remove the unchanged logger plugin'
 
     $toggleRoot = Join-Path $testRoot 'toggle'
     [void][IO.Directory]::CreateDirectory($toggleRoot)
