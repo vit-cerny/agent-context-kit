@@ -1,0 +1,14 @@
+name: checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  powershell:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test installer idempotency, backup, and toggle
+        shell: pwsh
+        run: ./tests/manage.test.ps1

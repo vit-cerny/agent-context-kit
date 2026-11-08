@@ -1,0 +1,6 @@
+# Merge these plugin entries into the DSH configuration's plugin list.
+# Keep this order. Check package docs against the DSH version you run.
+plugins:
+  - name: '@deepseek-ai/dsh-token-meter'
+  - name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+  - name: '@deepseek-ai/dsh-compaction-basic'

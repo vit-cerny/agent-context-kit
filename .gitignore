@@ -1,0 +1,5 @@
+*.agent-context-kit-*.tmp
+*.agent-context-kit.bak
+graphify-out/
+__pycache__/
+.venv/
